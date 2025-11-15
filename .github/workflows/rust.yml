@@ -1,0 +1,61 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - '*'
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Caching objects
+      id: cache-objects
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo
+          ${{ github.workspace }}/target
+        key: ${{ runner.os }}-rust-objects
+
+    - name: pre-commit
+      run: |
+        pip install pre-commit
+        pre-commit autoupdate --repo https://github.com/pre-commit/pre-commit-hooks
+        pre-commit run --all-files
+
+    - name: Build
+      run: cargo build
+
+    - name: Run tests
+      run: cargo test
+
+    - name: Code coverage
+      run: |
+        cargo install cargo-llvm-cov
+        # rustup component add llvm-tools-preview --toolchain stable-x86_64-unknown-linux-gnu
+        cargo llvm-cov
+
+        COVERAGE=$(cargo llvm-cov --json | jq -r '.data[0].totals.lines.percent')
+
+        if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+          echo "❌ Code coverage is below 70% (Current: ${COVERAGE}%)"
+          exit 1
+        fi
+    # - name: Install Miri
+    #   run: |
+    #     rustup toolchain install nightly --component miri
+    #     rustup override set nightly
+    #     cargo miri setup
+    # - name: Test with Miri
+    #   run: cargo miri test

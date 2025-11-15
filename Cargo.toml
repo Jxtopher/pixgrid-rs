@@ -1,0 +1,13 @@
+[package]
+name = "pixgrid"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jxtopher"]
+description = "The PixGrid library is designed to convert a simple, human-readable text file format, defining a pixel grid, into an image."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Jxtopher/enum-toggles-rs"
+keywords = ["image-generation", "human-readable-image", "pixel-art", "grid",  "renderer"]
+categories = ["graphics", "parsing", "rendering"]
+
+[dependencies]
+image = "0.25.8"
