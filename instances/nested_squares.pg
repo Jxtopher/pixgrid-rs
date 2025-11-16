@@ -1,0 +1,22 @@
+# --- RENDERING PARAMETERS ---
+cell_size = 40
+draw_grid = true
+
+# --- COLOR DEFINITION (Code = R, G, B) ---
+0 = 255, 255, 255 # White (background)
+1 = 0, 0, 0       # Black (border/fill)
+2 = 255, 165, 0   # Orange
+3 = 0, 255, 0     # Green
+
+# --- START OF GRID (separated by spaces) ---
+---
+0 0 0 0 0 0 0 0 0 0
+0 1 1 1 1 1 1 1 1 0
+0 1 2 2 2 2 2 2 1 0
+0 1 2 3 3 3 3 2 1 0
+0 1 2 3 0 0 3 2 1 0
+0 1 2 3 0 0 3 2 1 0
+0 1 2 3 3 3 3 2 1 0
+0 1 2 2 2 2 2 2 1 0
+0 1 1 1 1 1 1 1 1 0
+0 0 0 0 0 0 0 0 0 0

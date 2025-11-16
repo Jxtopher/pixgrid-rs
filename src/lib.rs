@@ -1,5 +1,72 @@
 //! A module for parsing simple grid data definitions and rendering them as PNG or SVG images.
 //! It supports mapping color codes (u8) to specific RGB values and defining rendering parameters.
+//! ```rust
+//! use pixgrid::PixGrid;
+//! use std::error::Error;
+//! use std::fs;
+//! use std::path::Path;
+//!
+//! fn main() -> Result<(), Box<dyn Error>> {
+//!     let input_file_path = "instances/nested_squares.pg";
+//!
+//!     // Modify here to choose the output extension and format.
+//!     let output_file_name = "nested_squares.svg";
+//!
+//!     let output_path = Path::new(output_file_name);
+//!
+//!     // 1. Reading the file
+//!     println!("Reading file: {}", input_file_path);
+//!     let input_data = fs::read_to_string(input_file_path).map_err(|e| {
+//!         format!(
+//!             "Error reading file {}: {}",
+//!             input_file_path, e
+//!         )
+//!     })?;
+//!
+//!     // 2. Parsing colors and the grid (PixGrid contains everything)
+//!     // Using the static method PixGrid::parse
+//!     let pg = PixGrid::parse(&input_data)?;
+//!
+//!     println!(
+//!         "Defined colors: {:?}",
+//!         pg.color_map.keys().collect::<Vec<_>>()
+//!     );
+//!     println!(
+//!         "Grid read: {} rows x {} columns",
+//!         pg.grid_data.len(),
+//!         pg.grid_data.first().map_or(0, |r| r.len())
+//!     );
+//!
+//!     // 3. Image generation (selection logic)
+//!     let extension = output_path
+//!         .extension()
+//!         .and_then(std::ffi::OsStr::to_str)
+//!         .unwrap_or_default();
+//!
+//!     match extension {
+//!         "png" => {
+//!             println!("Generating in PNG format...");
+//!             // Using the instance method
+//!             pg.generate_png(output_path)?;
+//!         }
+//!         "svg" => {
+//!             println!("Generating in SVG format...");
+//!             // Using the instance method
+//!             pg.generate_svg(output_path)?;
+//!         }
+//!         _ => {
+//!             return Err(format!(
+//!                 "Unsupported file extension: '{}'. Use '.png' or '.svg'.",
+//!                 extension
+//!             )
+//!             .into());
+//!         }
+//!     }
+//!
+//!     println!("Generation finished successfully!");
+//!     Ok(())
+//! }
+//! ```
 
 use image::{Rgb, RgbImage};
 use std::collections::HashMap;
@@ -12,13 +79,13 @@ use std::path::Path;
 /// cell size, and grid line visibility settings.
 pub struct PixGrid {
     /// Maps the color code (u8) found in `grid_data` to a specific RGB color.
-    pub(crate) color_map: HashMap<u8, Rgb<u8>>,
+    pub color_map: HashMap<u8, Rgb<u8>>,
     /// The actual grid data, where each inner Vec<u8> is a row of color codes.
-    pub(crate) grid_data: Vec<Vec<u8>>,
+    pub grid_data: Vec<Vec<u8>>,
     /// The size (width and height) in pixels for each cell in the grid.
-    pub(crate) cell_size: u32,
+    pub cell_size: u32,
     /// Optional RGB color for drawing grid lines. None means no lines are drawn.
-    pub(crate) grid_color: Option<Rgb<u8>>,
+    pub grid_color: Option<Rgb<u8>>,
 }
 
 impl PixGrid {
