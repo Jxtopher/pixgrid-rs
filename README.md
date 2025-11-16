@@ -62,3 +62,71 @@ grid_color = 0, 0, 0 # New: Black grid lines (RGB)
 0 1 1 1 1 1 1 1 1 0
 0 0 0 0 0 0 0 0 0 0
 ```
+
+## Snippet
+
+This small Rust program is a command-line tool that uses the `pixgrid` library to visualize data.
+
+1. It reads a plain text definition file (`.pg`) that contains color codes and grid layout information.
+2. It uses `PixGrid::parse` to convert this text into a structured grid object.
+3. Based on the output file's extension (`.png` or `.svg`), it calls the corresponding method (`generate_png` or `generate_svg`) to draw the pixel art image and save it to the disk.
+
+
+```rust
+use pixgrid::PixGrid;
+use std::error::Error;
+use std::fs;
+use std::path::Path;
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_file_path = "instances/nested_squares.pg";
+    // Modify here to choose the output extension and format.
+    let output_file_name = "nested_squares.svg";
+    let output_path = Path::new(output_file_name);
+    // 1. Reading the file
+    println!("Reading file: {}", input_file_path);
+    let input_data = fs::read_to_string(input_file_path).map_err(|e| {
+        format!(
+            "Error reading file {}: {}",
+            input_file_path, e
+        )
+    })?;
+    // 2. Parsing colors and the grid (PixGrid contains everything)
+    // Using the static method PixGrid::parse
+    let pg = PixGrid::parse(&input_data)?;
+    println!(
+        "Defined colors: {:?}",
+        pg.color_map.keys().collect::<Vec<_>>()
+    );
+    println!(
+        "Grid read: {} rows x {} columns",
+        pg.grid_data.len(),
+        pg.grid_data.first().map_or(0, |r| r.len())
+    );
+    // 3. Image generation (selection logic)
+    let extension = output_path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default();
+    match extension {
+        "png" => {
+            println!("Generating in PNG format...");
+            // Using the instance method
+            pg.generate_png(output_path)?;
+        }
+        "svg" => {
+            println!("Generating in SVG format...");
+            // Using the instance method
+            pg.generate_svg(output_path)?;
+        }
+        _ => {
+            return Err(format!(
+                "Unsupported file extension: '{}'. Use '.png' or '.svg'.",
+                extension
+            )
+            .into());
+        }
+    }
+    println!("Generation finished successfully!");
+    Ok(())
+}
+```
