@@ -443,8 +443,8 @@ impl PixGrid {
             // Calculate the number of cells required for this code
             let count = (total_cells as f64 * proportion).round() as usize;
 
-            // Add the color code the required number of times
-            codes_list.extend(iter::repeat(code).take(count));
+            // Add the color code the required number of times using the concise method
+            codes_list.extend(iter::repeat_n(code, count));
         }
 
         // Adjust size if rounding caused a slight difference
@@ -454,7 +454,7 @@ impl PixGrid {
             // Fill the small difference with the first code (or the most frequent)
             let diff = total_cells - codes_list.len();
             if let Some(&(first_code, _)) = proportions.first() {
-                codes_list.extend(iter::repeat(first_code).take(diff));
+                codes_list.extend(std::iter::repeat_n(first_code, diff));
             }
         }
 
