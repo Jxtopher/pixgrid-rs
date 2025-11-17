@@ -387,9 +387,9 @@ impl PixGrid {
     /// Cells not assigned the activation code will remain at the default code (0).
     ///
     /// # Arguments
-    /// * `activation_code`: The color code (e.g., 1) to use for the randomized cells.
-    /// * `density`: The probability (0.0 to 1.0) that a cell will be set to `activation_code`.
-    pub fn random_sparse_fill(&mut self, activation_code: u8, density: f64) {
+    /// * `cell_state`: The color code (e.g., 1) to use for the randomized cells.
+    /// * `density`: The probability (0.0 to 1.0) that a cell will be set to `cell_state`.
+    pub fn random_sparse_fill(&mut self, cell_state: u8, density: f64) {
         let (width, height) = self.dimensions();
         let mut rng = rng();
 
@@ -402,7 +402,7 @@ impl PixGrid {
                 // Check if a random floating-point number is less than the density
                 if rng.random::<f64>() < p {
                     // Set the cell to the activation code
-                    self.grid_data[y][x] = activation_code;
+                    self.grid_data[y][x] = cell_state;
                 } else {
                     // Set the cell to the default code (usually 0, but explicit reset is safer)
                     self.grid_data[y][x] = 0;
@@ -833,15 +833,15 @@ mod tests {
         // 1. Setup: Create a 10x10 grid (100 total cells)
         let mut pg = PixGrid::new(10, 10);
         let total_cells = 100;
-        const ACTIVATION_CODE: u8 = 1;
+        const CELL_STATE: u8 = 1;
 
         // --- 1. Test density = 0.0 (Edge case: No activation) ---
-        pg.random_sparse_fill(ACTIVATION_CODE, 0.0);
+        pg.random_sparse_fill(CELL_STATE, 0.0);
         let count_0 = pg
             .grid_data
             .iter()
             .flatten()
-            .filter(|&&c| c == ACTIVATION_CODE)
+            .filter(|&&c| c == CELL_STATE)
             .count();
         assert_eq!(
             count_0, 0,
@@ -849,12 +849,12 @@ mod tests {
         );
 
         // --- 2. Test density = 1.0 (Edge case: All cells activated) ---
-        pg.random_sparse_fill(ACTIVATION_CODE, 1.0);
+        pg.random_sparse_fill(CELL_STATE, 1.0);
         let count_1 = pg
             .grid_data
             .iter()
             .flatten()
-            .filter(|&&c| c == ACTIVATION_CODE)
+            .filter(|&&c| c == CELL_STATE)
             .count();
         assert_eq!(
             count_1, total_cells,
@@ -869,13 +869,13 @@ mod tests {
         const TOLERANCE: usize = 15;
 
         // Fill the grid with the target density
-        pg.random_sparse_fill(ACTIVATION_CODE, TARGET_DENSITY);
+        pg.random_sparse_fill(CELL_STATE, TARGET_DENSITY);
 
         let actual_count = pg
             .grid_data
             .iter()
             .flatten()
-            .filter(|&&c| c == ACTIVATION_CODE)
+            .filter(|&&c| c == CELL_STATE)
             .count();
 
         // Define the boundaries of the expected range
