@@ -75,8 +75,15 @@ use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CellPosition {
+    pub x: usize, // Index de Colonne (Largeur)
+    pub y: usize, // Index de Ligne (Hauteur)
+}
+
 /// Represents a pixel grid configuration, containing color mappings, the grid layout,
 /// cell size, and grid line visibility settings.
+#[derive(Debug, Clone)]
 pub struct PixGrid {
     /// Maps the color code (u8) found in `grid_data` to a specific RGB color.
     pub color_map: HashMap<u8, Rgb<u8>>,
@@ -89,6 +96,150 @@ pub struct PixGrid {
 }
 
 impl PixGrid {
+    /// ✨ **Constructor:** Creates a new `PixGrid` with the specified dimensions.
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - The number of columns (grid width).
+    /// * `height` - The number of rows (grid height).
+    ///
+    /// # Default Values Used
+    ///
+    /// * **`cell_size`**: 1 (Default pixel size for each cell).
+    /// * **`grid_color`**: `None` (No grid lines drawn by default).
+    /// * **`default_color_code`**: 0 (Default color code used to fill the grid).
+    pub fn new(width: usize, height: usize) -> Self {
+        // Define the default color code for initial filling (e.g., 0 for background/empty)
+        const DEFAULT_COLOR_CODE: u8 = 0;
+
+        // 1. Create a row (Vec<u8>) of 'width' size, filled with the default color code.
+        let row = vec![DEFAULT_COLOR_CODE; width];
+
+        // 2. Create the vector of vectors (grid_data) of 'height',
+        //    where each element is a copy of the 'row'.
+        let grid_data = vec![row; height];
+
+        PixGrid {
+            color_map: HashMap::new(), // Empty color palette by default
+            grid_data,
+            cell_size: 1,     // Default cell size of 1 pixel
+            grid_color: None, // No grid lines by default
+        }
+    }
+
+    /// Sets the color code of a single cell at the given logical position.
+    ///
+    /// Returns Ok(()) on success or Err if the position is out of bounds.
+    pub fn set_cell(&mut self, position: CellPosition, color_code: u8) -> Result<(), &'static str> {
+        let (width, height) = self.dimensions();
+
+        // Check if the coordinates are within the grid bounds
+        if position.y >= height || position.x >= width {
+            return Err("Cell position is out of bounds.");
+        }
+
+        // Access the grid using the named fields (y then x)
+        self.grid_data[position.y][position.x] = color_code;
+        Ok(())
+    }
+
+    /// Retrieves the color code of a single cell at the given logical position.
+    ///
+    /// Returns Option<u8>, which is None if the position is out of bounds.
+    pub fn get_cell(&self, position: CellPosition) -> Option<u8> {
+        // Use the Option trait functions for safe, concise access
+        self.grid_data
+            .get(position.y) // Checks if the row index (y) is valid
+            .and_then(|row| row.get(position.x)) // Checks if the column index (x) is valid
+            .copied() // Converts &u8 to u8, returning None if any step failed
+    }
+
+    /// Retrieves the position and color code of the 8 surrounding cells (Moore neighborhood)
+    /// for the given position. Out-of-bounds cells are skipped.
+    ///
+    /// Returns a Vec<(CellPosition, u8)>.
+    pub fn get_moore_neighbors(&self, center_pos: CellPosition) -> Vec<(CellPosition, u8)> {
+        let (width, height) = self.dimensions();
+        let mut neighbors = Vec::with_capacity(8);
+
+        // If the center position itself is out of bounds, return an empty list.
+        if center_pos.x >= width || center_pos.y >= height {
+            return neighbors;
+        }
+
+        // Iterate over the 8 directions (dx, dy) around the center
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                // Skip the central cell (dx=0, dy=0)
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+
+                // Calculate the potential neighbor's position
+                // Use i64 to safely calculate coordinates when subtracting 1 (-1)
+                let new_x = center_pos.x as i64 + dx;
+                let new_y = center_pos.y as i64 + dy;
+
+                // 1. Check if the coordinates are within the limits [0, width/height - 1]
+                if new_x >= 0 && new_x < width as i64 && new_y >= 0 && new_y < height as i64 {
+                    let neighbor_pos = CellPosition {
+                        x: new_x as usize,
+                        y: new_y as usize,
+                    };
+
+                    // 2. Retrieve the color code. We can use get_cell for safety.
+                    if let Some(code) = self.get_cell(neighbor_pos) {
+                        neighbors.push((neighbor_pos, code));
+                    }
+                }
+            }
+        }
+        neighbors
+    }
+
+    /// Retrieves the position and color code of the 4 cardinal neighboring cells
+    /// (Von Neumann neighborhood: Top, Bottom, Left, Right) for the given position.
+    /// Out-of-bounds cells are skipped.
+    ///
+    /// Returns a Vec<(CellPosition, u8)>.
+    pub fn get_von_neumann_neighbors(&self, center_pos: CellPosition) -> Vec<(CellPosition, u8)> {
+        let (width, height) = self.dimensions();
+        let mut neighbors = Vec::with_capacity(4);
+
+        // If the center position itself is out of bounds, return an empty list.
+        if center_pos.x >= width || center_pos.y >= height {
+            return neighbors;
+        }
+
+        // Define the 4 cardinal directions: (dx, dy)
+        let directions = [
+            (0, -1), // Top
+            (0, 1),  // Bottom
+            (-1, 0), // Left
+            (1, 0),  // Right
+        ];
+
+        for (dx, dy) in directions.iter() {
+            // Use i64 for safe coordinate arithmetic
+            let new_x = center_pos.x as i64 + dx;
+            let new_y = center_pos.y as i64 + dy;
+
+            // 1. Check if the potential neighbor is within the grid limits
+            if new_x >= 0 && new_x < width as i64 && new_y >= 0 && new_y < height as i64 {
+                let neighbor_pos = CellPosition {
+                    x: new_x as usize,
+                    y: new_y as usize,
+                };
+
+                // 2. Retrieve the color code and push the neighbor if successful
+                if let Some(code) = self.get_cell(neighbor_pos) {
+                    neighbors.push((neighbor_pos, code));
+                }
+            }
+        }
+        neighbors
+    }
+
     /// Parses a string of input data into a PixGrid configuration.
     ///
     /// The input format expects configuration parameters (cell_size, grid_color) and
@@ -210,6 +361,22 @@ impl PixGrid {
             cell_size,
             grid_color,
         })
+    }
+
+    /// Retrieves the width and height of the grid (in number of cells).
+    /// Returns (width, height). Returns (0, 0) if the grid is empty.
+    pub fn dimensions(&self) -> (usize, usize) {
+        let height = self.grid_data.len();
+
+        let width = if height > 0 {
+            // Use the length of the first row for the width.
+            // map_or(0, |r| r.len()) safely handles the case of an empty inner vector.
+            self.grid_data.first().map_or(0, |r| r.len())
+        } else {
+            0
+        };
+
+        (width, height)
     }
 
     /// Generates a PNG image from the stored grid data.
@@ -473,6 +640,310 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    #[test]
+    /// Tests the PixGrid::new(width, height) constructor to ensure default values and size are correct.
+    fn test_new() {
+        const WIDTH: usize = 5;
+        const HEIGHT: usize = 3;
+
+        let pg = PixGrid::new(WIDTH, HEIGHT);
+
+        // 1. Test configuration parameters defaults
+        assert_eq!(pg.cell_size, 1, "cell_size should default to 1");
+        assert!(pg.grid_color.is_none(), "grid_color should default to None");
+        assert!(
+            pg.color_map.is_empty(),
+            "color_map should be empty by default"
+        );
+
+        // 2. Test grid dimensions
+        assert_eq!(
+            pg.grid_data.len(),
+            HEIGHT,
+            "Grid should have the specified height ({} rows)",
+            HEIGHT
+        );
+        assert!(
+            pg.grid_data.iter().all(|row| row.len() == WIDTH),
+            "All rows should have the specified width ({} columns)",
+            WIDTH
+        );
+
+        // 3. Test grid content (all elements should be the default color code 0)
+        let default_code = 0;
+        let all_default = pg
+            .grid_data
+            .iter()
+            .all(|row| row.iter().all(|&code| code == default_code));
+        assert!(
+            all_default,
+            "All cells should be filled with the default color code {}",
+            default_code
+        );
+    }
+
+    #[test]
+    /// Tests the dimensions method on a populated 10x10 grid.
+    fn test_dimensions_valid_grid() {
+        let pix_grid = get_test_pixgrid(); // 10 rows x 10 columns
+
+        let (width, height) = pix_grid.dimensions();
+
+        assert_eq!(width, 10, "Width should be 10 for the test grid");
+        assert_eq!(height, 10, "Height should be 10 for the test grid");
+    }
+
+    #[test]
+    /// Tests the dimensions method on an empty grid (no rows).
+    fn test_dimensions_empty_grid() {
+        // Create an empty PixGrid manually
+        let pix_grid = PixGrid {
+            color_map: HashMap::new(),
+            grid_data: Vec::new(), // Empty grid_data
+            cell_size: 10,
+            grid_color: None,
+        };
+
+        let (width, height) = pix_grid.dimensions();
+
+        assert_eq!(width, 0, "Width should be 0 for an empty grid");
+        assert_eq!(height, 0, "Height should be 0 for an empty grid");
+    }
+
+    #[test]
+    /// Tests the dimensions method on a grid that has rows but zero columns (should still return 0 width).
+    fn test_dimensions_zero_width_rows() {
+        // Create a PixGrid with 2 rows, each having 0 columns
+        let pix_grid = PixGrid {
+            color_map: HashMap::new(),
+            grid_data: vec![Vec::new(), Vec::new()], // 2 rows, 0 columns each
+            cell_size: 10,
+            grid_color: None,
+        };
+
+        let (width, height) = pix_grid.dimensions();
+
+        assert_eq!(height, 2, "Height should be 2 (number of rows)");
+        assert_eq!(width, 0, "Width should be 0 (length of the first row)");
+    }
+
+    #[test]
+    /// Tests the get_cell method for valid and invalid positions.
+    fn test_get_cell() {
+        let pix_grid = get_test_pixgrid(); // 10x10 grid
+
+        // Définitions locales
+        let center = CellPosition { x: 4, y: 4 };
+        let valid_corner = CellPosition { x: 0, y: 0 };
+        // Le test grid fait 10 de large/haut, donc 10 est hors limites (0..9)
+        let out_of_bounds = CellPosition { x: 10, y: 10 };
+
+        // 1. Valid position check (Center is code 0)
+        assert_eq!(
+            pix_grid.get_cell(center),
+            Some(0),
+            "Should retrieve code 0 for center cell"
+        );
+
+        // 2. Valid position check (Corner is code 0)
+        assert_eq!(
+            pix_grid.get_cell(valid_corner),
+            Some(0),
+            "Should retrieve code 0 for corner cell (0, 0)"
+        );
+
+        // 3. Invalid position check
+        assert_eq!(
+            pix_grid.get_cell(out_of_bounds),
+            None,
+            "Should return None for out-of-bounds position"
+        );
+    }
+
+    #[test]
+    /// Tests the set_cell method for valid and invalid positions, and verifies the change.
+    fn test_set_cell() {
+        let mut pix_grid = get_test_pixgrid(); // 10x10 grid, center is 0
+
+        // Définitions locales
+        let center = CellPosition { x: 4, y: 4 };
+        let out_of_bounds = CellPosition { x: 100, y: 100 };
+        const NEW_CODE: u8 = 99;
+
+        // 1. Set cell at a valid position (CENTER)
+        let result = pix_grid.set_cell(center, NEW_CODE);
+        assert!(
+            result.is_ok(),
+            "Setting cell at a valid position should succeed"
+        );
+
+        // 2. Verify the change using get_cell
+        assert_eq!(
+            pix_grid.get_cell(center),
+            Some(NEW_CODE),
+            "get_cell should reflect the change to NEW_CODE"
+        );
+
+        // 3. Set cell at an invalid position (OUT_OF_BOUNDS)
+        let error_result = pix_grid.set_cell(out_of_bounds, NEW_CODE);
+        assert!(
+            error_result.is_err(),
+            "Setting cell out of bounds should return an error"
+        );
+
+        // 4. Verify that the grid data size hasn't changed (no panic/corruption)
+        let (width, height) = pix_grid.dimensions();
+        assert_eq!(width, 10);
+        assert_eq!(height, 10);
+    }
+
+    #[test]
+    /// Tests the get_moore_neighbors method for a central cell and a corner cell.
+    fn test_get_moore_neighbors() {
+        let mut pg = PixGrid::new(3, 3);
+
+        // Define positions for testing
+        let center = CellPosition { x: 1, y: 1 };
+        let corner = CellPosition { x: 0, y: 0 };
+        let out_of_bounds = CellPosition { x: 5, y: 5 };
+
+        // Set codes for verification (creating a pattern of 1s around the center)
+        // The grid will look like:
+        // 0 1 0
+        // 1 1 1
+        // 0 1 0
+        pg.set_cell(center, 1).unwrap();
+        pg.set_cell(CellPosition { x: 0, y: 1 }, 1).unwrap(); // Left
+        pg.set_cell(CellPosition { x: 2, y: 1 }, 1).unwrap(); // Right
+        pg.set_cell(CellPosition { x: 1, y: 0 }, 1).unwrap(); // Top
+        pg.set_cell(CellPosition { x: 1, y: 2 }, 1).unwrap(); // Bottom
+
+        // --- 1. Test the center cell (should have 8 neighbors) ---
+        let neighbors_center = pg.get_moore_neighbors(center);
+        assert_eq!(
+            neighbors_center.len(),
+            8,
+            "The center should have 8 neighbors"
+        );
+
+        // Count codes (4 zeros (diagonals), 4 ones (cardinals))
+        let count_zeros = neighbors_center
+            .iter()
+            .filter(|&(_, code)| *code == 0)
+            .count();
+        let count_ones = neighbors_center
+            .iter()
+            .filter(|&(_, code)| *code == 1)
+            .count();
+        assert_eq!(
+            count_zeros, 4,
+            "The center should be surrounded by 4 zeros (diagonals)"
+        );
+        assert_eq!(
+            count_ones, 4,
+            "The center should be surrounded by 4 ones (cardinals)"
+        );
+
+        // --- 2. Test a corner cell (should have 3 neighbors) ---
+        let neighbors_corner = pg.get_moore_neighbors(corner);
+        assert_eq!(
+            neighbors_corner.len(),
+            3,
+            "The corner should have 3 neighbors"
+        );
+
+        // Verify the positions of the corner's neighbors: (0, 1), (1, 0), (1, 1)
+        let expected_positions = vec![
+            CellPosition { x: 0, y: 1 }, // Bottom
+            CellPosition { x: 1, y: 0 }, // Right
+            CellPosition { x: 1, y: 1 }, // Diagonal
+        ];
+        for (pos, _) in neighbors_corner.iter() {
+            assert!(
+                expected_positions.contains(pos),
+                "Neighbor position {:?} is not expected for the corner.",
+                pos
+            );
+        }
+
+        // --- 3. Test an out-of-bounds position (should be empty) ---
+        let neighbors_oob = pg.get_moore_neighbors(out_of_bounds);
+        assert!(
+            neighbors_oob.is_empty(),
+            "An out-of-bounds position should return no neighbors"
+        );
+    }
+
+    #[test]
+    /// Tests the get_von_neumann_neighbors method for a central cell and a corner cell.
+    fn test_get_von_neumann_neighbors() {
+        let mut pg = PixGrid::new(3, 3); // Creates a 3x3 grid (all codes are 0 by default)
+
+        // Set codes for verification: Center and Left/Right are 1s, Top/Bottom are 2s.
+        // The grid will look like:
+        // 0 2 0
+        // 1 1 1
+        // 0 2 0
+        let center = CellPosition { x: 1, y: 1 };
+        let corner = CellPosition { x: 0, y: 0 };
+        let out_of_bounds = CellPosition { x: 5, y: 5 };
+
+        // Set center and cardinal neighbors
+        pg.set_cell(center, 1).unwrap();
+        pg.set_cell(CellPosition { x: 0, y: 1 }, 1).unwrap(); // Left (Code 1)
+        pg.set_cell(CellPosition { x: 2, y: 1 }, 1).unwrap(); // Right (Code 1)
+        pg.set_cell(CellPosition { x: 1, y: 0 }, 2).unwrap(); // Top (Code 2)
+        pg.set_cell(CellPosition { x: 1, y: 2 }, 2).unwrap(); // Bottom (Code 2)
+
+        // --- 1. Test the center cell (should have 4 neighbors) ---
+        let neighbors_center = pg.get_von_neumann_neighbors(center);
+        assert_eq!(
+            neighbors_center.len(),
+            4,
+            "The center must have 4 cardinal neighbors"
+        );
+
+        // Check code counts: 2 cells with code 1 (Left/Right), 2 cells with code 2 (Top/Bottom)
+        let count_ones = neighbors_center
+            .iter()
+            .filter(|&(_, code)| *code == 1)
+            .count();
+        let count_twos = neighbors_center
+            .iter()
+            .filter(|&(_, code)| *code == 2)
+            .count();
+        let count_zeros = neighbors_center
+            .iter()
+            .filter(|&(_, code)| *code == 0)
+            .count();
+
+        assert_eq!(count_ones, 2, "Should find 2 neighbors with code 1");
+        assert_eq!(count_twos, 2, "Should find 2 neighbors with code 2");
+        assert_eq!(count_zeros, 0, "Should find 0 neighbors with code 0");
+
+        // --- 2. Test a corner cell (should have 2 neighbors) ---
+        let neighbors_corner = pg.get_von_neumann_neighbors(corner);
+        assert_eq!(
+            neighbors_corner.len(),
+            2,
+            "The corner must have 2 cardinal neighbors"
+        );
+
+        // Expected neighbors for (0, 0) are (0, 1) [Bottom] and (1, 0) [Right]
+        let expected_positions = vec![CellPosition { x: 0, y: 1 }, CellPosition { x: 1, y: 0 }];
+        let found_positions: Vec<CellPosition> =
+            neighbors_corner.iter().map(|(pos, _)| *pos).collect();
+
+        assert!(found_positions.contains(&expected_positions[0]));
+        assert!(found_positions.contains(&expected_positions[1]));
+
+        // --- 3. Test an out-of-bounds position (should be empty) ---
+        let neighbors_oob = pg.get_von_neumann_neighbors(out_of_bounds);
+        assert!(
+            neighbors_oob.is_empty(),
+            "An out-of-bounds position should return no neighbors"
+        );
+    }
     /// Helper function to parse the standard input for tests
     fn get_test_pixgrid() -> PixGrid {
         let input = r#"
