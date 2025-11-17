@@ -69,10 +69,14 @@
 //! ```
 
 use image::{Rgb, RgbImage};
+use rand::rng;
+use rand::seq::SliceRandom;
+use rand::Rng;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Write;
 use std::fs;
+use std::iter;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -377,6 +381,101 @@ impl PixGrid {
         };
 
         (width, height)
+    }
+
+    /// Initializes the grid with a specific color code based on a given density (probability).
+    /// Cells not assigned the activation code will remain at the default code (0).
+    ///
+    /// # Arguments
+    /// * `activation_code`: The color code (e.g., 1) to use for the randomized cells.
+    /// * `density`: The probability (0.0 to 1.0) that a cell will be set to `activation_code`.
+    pub fn random_sparse_fill(&mut self, activation_code: u8, density: f64) {
+        let (width, height) = self.dimensions();
+        let mut rng = rng();
+
+        // Ensure density is within a valid range
+        let p = density.clamp(0.0, 1.0);
+
+        // Iterate through all cells
+        for y in 0..height {
+            for x in 0..width {
+                // Check if a random floating-point number is less than the density
+                if rng.random::<f64>() < p {
+                    // Set the cell to the activation code
+                    self.grid_data[y][x] = activation_code;
+                } else {
+                    // Set the cell to the default code (usually 0, but explicit reset is safer)
+                    self.grid_data[y][x] = 0;
+                }
+            }
+        }
+    }
+
+    /// Fills the grid randomly according to a given vector of code proportions.
+    ///
+    /// # Arguments
+    /// * `proportions`: A slice of tuples `(color_code: u8, proportion: f64)`.
+    ///   The sum of all proportions must be close to 1.0.
+    ///
+    /// # Errors
+    /// Returns an `Err` if the proportions are invalid (sum is not close to 1.0).
+    pub fn random_fill_with_proportions(
+        &mut self,
+        proportions: &[(u8, f64)],
+    ) -> Result<(), &'static str> {
+        let (width, height) = self.dimensions();
+        let total_cells = width * height;
+
+        if total_cells == 0 {
+            return Ok(());
+        }
+
+        // --- 1. Validate Proportion Sum ---
+        let sum_of_proportions: f64 = proportions.iter().map(|(_, p)| p).sum();
+        if (sum_of_proportions - 1.0).abs() > 1e-6 {
+            return Err("The sum of proportions must be close to 1.0 (e.g., 100%).");
+        }
+
+        // --- 2. Build the List of Codes ---
+        let mut codes_list: Vec<u8> = Vec::with_capacity(total_cells);
+
+        for &(code, proportion) in proportions.iter() {
+            // Calculate the number of cells required for this code
+            let count = (total_cells as f64 * proportion).round() as usize;
+
+            // Add the color code the required number of times
+            codes_list.extend(iter::repeat(code).take(count));
+        }
+
+        // Adjust size if rounding caused a slight difference
+        if codes_list.len() > total_cells {
+            codes_list.truncate(total_cells);
+        } else if codes_list.len() < total_cells {
+            // Fill the small difference with the first code (or the most frequent)
+            let diff = total_cells - codes_list.len();
+            if let Some(&(first_code, _)) = proportions.first() {
+                codes_list.extend(iter::repeat(first_code).take(diff));
+            }
+        }
+
+        // --- 3. Random Shuffle ---
+        let mut rng = rng();
+        codes_list.shuffle(&mut rng);
+
+        // --- 4. Fill the Grid ---
+        let mut code_iter = codes_list.into_iter();
+
+        // The inner loop iterates x (columns), the outer loop iterates y (rows)
+        for row in self.grid_data.iter_mut() {
+            for cell in row.iter_mut() {
+                // `next()` should always succeed here as we adjusted the size
+                if let Some(code) = code_iter.next() {
+                    *cell = code;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Generates a PNG image from the stored grid data.
@@ -725,6 +824,173 @@ mod tests {
 
         assert_eq!(height, 2, "Height should be 2 (number of rows)");
         assert_eq!(width, 0, "Width should be 0 (length of the first row)");
+    }
+
+    #[test]
+    /// Tests the random_sparse_fill method to verify boundaries (0.0 and 1.0) and the distribution
+    /// for an intermediate density.
+    fn test_random_sparse_fill() {
+        // 1. Setup: Create a 10x10 grid (100 total cells)
+        let mut pg = PixGrid::new(10, 10);
+        let total_cells = 100;
+        const ACTIVATION_CODE: u8 = 1;
+
+        // --- 1. Test density = 0.0 (Edge case: No activation) ---
+        pg.random_sparse_fill(ACTIVATION_CODE, 0.0);
+        let count_0 = pg
+            .grid_data
+            .iter()
+            .flatten()
+            .filter(|&&c| c == ACTIVATION_CODE)
+            .count();
+        assert_eq!(
+            count_0, 0,
+            "With a density of 0.0, no cells should be activated."
+        );
+
+        // --- 2. Test density = 1.0 (Edge case: All cells activated) ---
+        pg.random_sparse_fill(ACTIVATION_CODE, 1.0);
+        let count_1 = pg
+            .grid_data
+            .iter()
+            .flatten()
+            .filter(|&&c| c == ACTIVATION_CODE)
+            .count();
+        assert_eq!(
+            count_1, total_cells,
+            "With a density of 1.0, all cells should be activated."
+        );
+
+        // --- 3. Test intermediate density (0.35) ---
+        const TARGET_DENSITY: f64 = 0.35;
+        const TARGET_COUNT: usize = 35;
+
+        // Define a tolerance to account for the random nature (e.g., +/- 15% of 100 cells)
+        const TOLERANCE: usize = 15;
+
+        // Fill the grid with the target density
+        pg.random_sparse_fill(ACTIVATION_CODE, TARGET_DENSITY);
+
+        let actual_count = pg
+            .grid_data
+            .iter()
+            .flatten()
+            .filter(|&&c| c == ACTIVATION_CODE)
+            .count();
+
+        // Define the boundaries of the expected range
+        let lower_bound = TARGET_COUNT.saturating_sub(TOLERANCE); // saturating_sub ensures the lower bound is not negative
+        let upper_bound = TARGET_COUNT + TOLERANCE;
+
+        // A. Verify the range
+        assert!(
+            actual_count >= lower_bound && actual_count <= upper_bound,
+            "The actual count ({}) should be in the range [{}, {}] for a density of {}",
+            actual_count,
+            lower_bound,
+            upper_bound,
+            TARGET_DENSITY
+        );
+
+        // B. Verify that the grid contains a mix of both codes (to ensure the random fill worked)
+        let count_default = pg.grid_data.iter().flatten().filter(|&&c| c == 0).count();
+        assert!(
+            actual_count > 0,
+            "At least one cell should be activated (code 1)."
+        );
+        assert!(
+            count_default > 0,
+            "At least one cell should be in the default state (code 0)."
+        );
+    }
+
+    #[test]
+    /// Tests the random grid filling method by checking proportion validation and the accuracy of final counts.
+    fn test_random_fill_with_proportions() {
+        // 1. Setup: Create a 10x10 grid (100 cells total)
+        let mut pg = PixGrid::new(10, 10);
+        let total_cells = 100;
+
+        // Define target proportions:
+        let valid_proportions = vec![
+            (0, 0.10), // Target: 10 cells
+            (1, 0.60), // Target: 60 cells
+            (2, 0.30), // Target: 30 cells
+        ];
+
+        let invalid_proportions = vec![
+            (0, 0.10),
+            (1, 0.60),
+            (2, 0.40), // Sums to 1.10 (Invalid)
+        ];
+
+        // --- 1. Failure Test: Invalid Proportions ---
+        let result_invalid = pg.random_fill_with_proportions(&invalid_proportions);
+        assert!(
+            result_invalid.is_err(),
+            "Should return an error if the sum of proportions is incorrect."
+        );
+
+        // --- 2. Success Test: Filling and Count Verification ---
+
+        // Reset the grid and attempt valid fill
+        let result_valid = pg.random_fill_with_proportions(&valid_proportions);
+        assert!(
+            result_valid.is_ok(),
+            "Filling with valid proportions should succeed."
+        );
+
+        // A. Count the occurrences of each code after filling
+        let mut counts: [usize; 3] = [0, 0, 0]; // For codes 0, 1, 2
+
+        for row in &pg.grid_data {
+            for &code in row {
+                if (code as usize) < counts.len() {
+                    counts[code as usize] += 1;
+                }
+            }
+        }
+
+        // B. Verify the total number of cells
+        assert_eq!(
+            counts.iter().sum::<usize>(),
+            total_cells,
+            "The total number of filled cells must equal 100."
+        );
+
+        // C. Verify individual counts against the target with tolerance
+
+        // We expect the counts to be exactly the targets due to the `round()` and size adjustment logic,
+        // but a small tolerance (e.g., 1) is used here to be robust against extremely minor floating-point quirks,
+        // although generally unnecessary with a 100-cell grid.
+        let tolerance = 1;
+
+        // Target for Code 0 (10%)
+        let target_0 = (total_cells as f64 * 0.10).round() as usize; // 10
+        assert!(
+            (counts[0] as isize - target_0 as isize).abs() <= tolerance as isize,
+            "Code 0 count should be close to {} (Found: {})",
+            target_0,
+            counts[0]
+        );
+
+        // Target for Code 1 (60%)
+        let target_1 = (total_cells as f64 * 0.60).round() as usize; // 60
+        assert!(
+            (counts[1] as isize - target_1 as isize).abs() <= tolerance as isize,
+            "Code 1 count should be close to {} (Found: {})",
+            target_1,
+            counts[1]
+        );
+
+        // Target for Code 2 (30%)
+        let target_2 = (total_cells as f64 * 0.30).round() as usize; // 30
+        assert!(
+            (counts[2] as isize - target_2 as isize).abs() <= tolerance as isize,
+            "Code 2 count should be close to {} (Found: {})",
+            target_2,
+            counts[2]
+        );
     }
 
     #[test]
