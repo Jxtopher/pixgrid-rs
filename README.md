@@ -69,7 +69,7 @@ This small Rust program is a command-line tool that uses the `pixgrid` library t
 
 1. It reads a plain text definition file (`.pg`) that contains color codes and grid layout information.
 2. It uses `PixGrid::parse` to convert this text into a structured grid object.
-3. Based on the output file's extension (`.png` or `.svg`), it calls the corresponding method (`generate_png` or `generate_svg`) to draw the pixel art image and save it to the disk.
+3. Based on the output file's extension (`.png` or `.svg`), it calls the corresponding method (`export_png` or `export_svg`) to draw the pixel art image and save it to the disk.
 
 
 ```rust
@@ -111,12 +111,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         "png" => {
             println!("Generating in PNG format...");
             // Using the instance method
-            pg.generate_png(output_path)?;
+            pg.export_png(output_path)?;
         }
         "svg" => {
             println!("Generating in SVG format...");
             // Using the instance method
-            pg.generate_svg(output_path)?;
+            pg.export_svg(output_path)?;
         }
         _ => {
             return Err(format!(
