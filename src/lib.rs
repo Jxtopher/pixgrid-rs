@@ -7,7 +7,7 @@
 //! use std::path::Path;
 //!
 //! fn main() -> Result<(), Box<dyn Error>> {
-//!     let input_file_path = "instances/nested_squares.pg";
+//!     let input_file_path = "instances/all_diff.pg";
 //!
 //!     // Modify here to choose the output extension and format.
 //!     let output_file_name = "nested_squares.svg";
@@ -47,12 +47,12 @@
 //!         "png" => {
 //!             println!("Generating in PNG format...");
 //!             // Using the instance method
-//!             pg.generate_png(output_path)?;
+//!             pg.export_png(output_path)?;
 //!         }
 //!         "svg" => {
 //!             println!("Generating in SVG format...");
 //!             // Using the instance method
-//!             pg.generate_svg(output_path)?;
+//!             pg.export_svg(output_path)?;
 //!         }
 //!         _ => {
 //!             return Err(format!(
@@ -72,12 +72,47 @@ use image::{Rgb, RgbImage};
 use rand::rng;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
-use std::fmt::Write;
 use std::fs;
+use std::fs::File;
+use std::io::Write;
 use std::iter;
 use std::path::Path;
+
+/// Utility function to convert HSV to RGB.
+/// h: Hue [0.0, 360.0], s: Saturation [0.0, 1.0], v: Value [0.0, 1.0]
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Rgb<u8> {
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+
+    let (r_prime, g_prime, b_prime) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+
+    Rgb([
+        ((r_prime + m) * 255.0).round() as u8,
+        ((g_prime + m) * 255.0).round() as u8,
+        ((b_prime + m) * 255.0).round() as u8,
+    ])
+}
+fn color_distance(c1: &Rgb<u8>, c2: &Rgb<u8>) -> f32 {
+    let r_diff = c1[0] as f32 - c2[0] as f32;
+    let g_diff = c1[1] as f32 - c2[1] as f32;
+    let b_diff = c1[2] as f32 - c2[2] as f32;
+    (r_diff * r_diff + g_diff * g_diff + b_diff * b_diff).sqrt()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CellPosition {
@@ -354,10 +389,6 @@ impl PixGrid {
             }
         }
 
-        if color_map.is_empty() {
-            return Err("No color definitions found.".into());
-        }
-
         // Returns the complete configuration struct
         Ok(PixGrid {
             color_map,
@@ -478,17 +509,192 @@ impl PixGrid {
         Ok(())
     }
 
-    /// Generates a PNG image from the stored grid data.
+    /// Exports the current PixGrid configuration to a file in the *.pg format.
+    ///
+    /// The output format includes:
+    /// 1. Rendering parameters (cell_size, grid_color).
+    /// 2. Color definitions (Code = R, G, B).
+    /// 3. The grid data, separated by "---".
+    ///
+    /// # Arguments
+    /// * `output_path` - The path to the file where the data will be written.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or an error if writing to the file fails.
+    pub fn export_pg(&self, output_path: &Path) -> Result<(), Box<dyn Error>> {
+        // Create or truncate the output file.
+        let mut file = File::create(output_path)?;
+
+        // --- 1. Write Rendering Parameters ---
+        writeln!(file, "cell_size = {}", self.cell_size)?;
+
+        // Write grid_color if it is defined.
+        if let Some(Rgb([r, g, b])) = self.grid_color {
+            writeln!(file, "grid_color = {}, {}, {}", r, g, b)?;
+        } else {
+            // Optional: Write a comment indicating no grid color is set, or simply omit the line.
+            writeln!(
+                file,
+                "# grid_color = <R, G, B> # Omitted: No grid lines are drawn."
+            )?;
+        }
+
+        if !self.color_map.is_empty() {
+            // --- 2. Write Color Definitions ---
+            // Sort the color map by code for a consistent and readable output.
+            let mut sorted_colors: Vec<(&u8, &Rgb<u8>)> = self.color_map.iter().collect();
+            sorted_colors.sort_by_key(|(code, _)| *code);
+
+            for (code, Rgb([r, g, b])) in sorted_colors {
+                // We use format! to construct the R, G, B string
+                writeln!(file, "{} = {}, {}, {}", code, r, g, b)?;
+            }
+        }
+
+        // --- 3. Write Grid Data ---
+        writeln!(file, "---")?;
+
+        // Write each row of the grid data.
+        for row in &self.grid_data {
+            // Convert the Vec<u8> row into a space-separated string.
+            let row_string: String = row
+                .iter()
+                .map(|&code| code.to_string())
+                .collect::<Vec<String>>()
+                .join(" ");
+
+            writeln!(file, "{}", row_string)?;
+        }
+
+        // Ensure all buffered content is written to the file.
+        file.flush()?;
+
+        Ok(())
+    }
+
+    pub fn get_missing_codes(&self) -> Vec<u8> {
+        let mut unique_codes = HashSet::new();
+        for row in &self.grid_data {
+            for &code in row {
+                unique_codes.insert(code);
+            }
+        }
+        unique_codes
+            .into_iter()
+            .filter(|code| !self.color_map.contains_key(code))
+            .collect()
+    }
+
+    /// Returns a list of standard distinct colors
+    fn get_standard_palette() -> Vec<Rgb<u8>> {
+        vec![
+            Rgb([255, 255, 255]), // White
+            Rgb([0, 0, 0]),       // Black
+            Rgb([31, 119, 180]),  // Blue
+            Rgb([255, 127, 14]),  // Orange
+            Rgb([44, 160, 44]),   // Green
+            Rgb([214, 39, 40]),   // Red
+            Rgb([148, 103, 189]), // Purple
+            Rgb([140, 86, 75]),   // Brown
+            Rgb([227, 119, 194]), // Pink
+            Rgb([127, 127, 127]), // Gray
+            Rgb([188, 189, 34]),  // Olive
+            Rgb([23, 190, 207]),  // Cyan
+            Rgb([255, 215, 0]),   // Gold
+            Rgb([0, 255, 127]),   // Spring Green
+        ]
+    }
+
+    /// Generates a complete color map.
+    /// 1. Tries to use standard distinct colors first.
+    /// 2. Falls back to Golden Angle approximation for remaining codes.
+    fn prepare_complete_color_map(&self) -> HashMap<u8, Rgb<u8>> {
+        let mut working_map = self.color_map.clone();
+        let mut missing_codes = self.get_missing_codes();
+
+        if missing_codes.is_empty() {
+            return working_map;
+        }
+
+        // SORTING IS CRITICAL for deterministic results
+        missing_codes.sort();
+
+        let palette = Self::get_standard_palette();
+        let min_dist = 30.0; // Distance threshold to consider a color "too close"
+
+        // List for codes that couldn't be satisfied by the palette
+        let mut codes_for_fallback = Vec::new();
+
+        // --- PHASE 1: Standard Palette ---
+        for &code in &missing_codes {
+            let mut assigned = false;
+
+            // Try to find a palette color that isn't close to ANY existing color in the map
+            for candidate in &palette {
+                let mut collision = false;
+                for existing in working_map.values() {
+                    if color_distance(candidate, existing) < min_dist {
+                        collision = true;
+                        break;
+                    }
+                }
+
+                if !collision {
+                    working_map.insert(code, *candidate);
+                    assigned = true;
+                    break;
+                }
+            }
+
+            if !assigned {
+                codes_for_fallback.push(code);
+            }
+        }
+
+        // --- PHASE 2: Golden Angle Fallback ---
+        // If there are still codes without colors, we use your Golden Angle logic.
+
+        if !codes_for_fallback.is_empty() {
+            // We iterate strictly on the remaining codes
+
+            // Let's start at 0 (Red) or an arbitrary offset.
+            // (Note: Since we might have added Red from the palette, overlap is possible strictly speaking,
+            // but Golden Angle quickly diverges).
+            let mut current_hue = 0.0;
+
+            // The Golden Angle approx (137.5 degrees).
+            let golden_angle = 137.508;
+
+            for &code in &codes_for_fallback {
+                // Generate color
+                // Saturation 0.8, Value 0.95 = Bright and distinct.
+                let generated_color = hsv_to_rgb(current_hue, 0.8, 0.95);
+
+                // We insert directly (assuming the user accepts the mathematical guarantee of distribution)
+                // or we could add a check here too, but let's stick to the requested logic logic.
+                working_map.insert(code, generated_color);
+
+                // Jump by the golden angle for the next code
+                current_hue = (current_hue + golden_angle) % 360.0;
+            }
+        }
+
+        working_map
+    }
+
+    /// Export a PNG image from the stored grid data.
     ///
     /// The image is created by scaling each u8 code in `grid_data` by `cell_size`.
     /// Unknown color codes default to magenta (Rgb([255, 0, 255])).
     ///
     /// # Errors
     /// Returns an error if the grid data is empty or if image saving fails.
-    pub fn generate_png(&self, output_path: &Path) -> Result<(), Box<dyn Error>> {
+    pub fn export_png(&self, output_path: &Path) -> Result<(), Box<dyn Error>> {
         if self.grid_data.is_empty() || self.grid_data[0].is_empty() {
             return Err("The grid data is empty or invalid.".into());
         }
+
+        let complete_map = self.prepare_complete_color_map();
 
         let grid_height = self.grid_data.len() as u32;
         let grid_width = self.grid_data[0].len() as u32;
@@ -498,14 +704,12 @@ impl PixGrid {
         let image_height = grid_height * cell_size;
 
         let mut img: RgbImage = RgbImage::new(image_width, image_height);
-        let unknown_color = Rgb([255, 0, 255]); // Default color for missing codes
 
         // 1. Iterate through the grid and draw colored cells
         for (y_grid, row) in self.grid_data.iter().enumerate() {
             for (x_grid, &color_code) in row.iter().enumerate() {
                 // Get the color, defaulting to unknown_color if the code is not in the map
-                let color = self.color_map.get(&color_code).unwrap_or(&unknown_color);
-
+                let color = complete_map.get(&color_code).unwrap();
                 // Draw a cell of size cell_size x cell_size
                 for i in 0..cell_size {
                     for j in 0..cell_size {
@@ -543,17 +747,19 @@ impl PixGrid {
         Ok(())
     }
 
-    /// Generates an SVG image (XML format) from the stored grid data.
+    /// Export an SVG image (XML format) from the stored grid data.
     ///
     /// Each grid cell is drawn as an SVG `<rect>` element.
     ///
     /// # Errors
     /// Returns an error if the grid data is empty or if file writing fails.
-    pub fn generate_svg(&self, output_path: &Path) -> Result<(), Box<dyn Error>> {
+    pub fn export_svg(&self, output_path: &Path) -> Result<(), Box<dyn Error>> {
         if self.grid_data.is_empty() || self.grid_data[0].is_empty() {
             // Corrected error message to English
             return Err("The grid data is empty or invalid.".into());
         }
+
+        let complete_map = self.prepare_complete_color_map();
 
         let grid_height = self.grid_data.len() as u32;
         let grid_width = self.grid_data[0].len() as u32;
@@ -562,9 +768,7 @@ impl PixGrid {
         let image_width = grid_width * cell_size;
         let image_height = grid_height * cell_size;
 
-        let unknown_color = Rgb([255, 0, 255]); // Magenta fallback
-
-        let mut svg_content = String::new();
+        let mut svg_content: Vec<u8> = Vec::new(); // Initialisation
 
         // 1. SVG Header: Defines the canvas size and ensures crisp edges for scaling
         writeln!(
@@ -576,7 +780,7 @@ impl PixGrid {
         // 2. Drawing cells (rectangles)
         for (y_grid, row) in self.grid_data.iter().enumerate() {
             for (x_grid, &color_code) in row.iter().enumerate() {
-                let color = self.color_map.get(&color_code).unwrap_or(&unknown_color);
+                let color = complete_map.get(&color_code).unwrap();
                 let Rgb([r, g, b]) = *color;
                 let fill_color = format!("rgb({},{},{})", r, g, b);
 
@@ -736,8 +940,9 @@ impl PixGrid {
 mod tests {
     use super::*;
     use image::Rgb;
-    use std::fs;
+    use std::io::Read;
     use std::path::PathBuf;
+    use std::{env, fs};
 
     #[test]
     /// Tests the PixGrid::new(width, height) constructor to ensure default values and size are correct.
@@ -1307,18 +1512,103 @@ cell_size = 40
     }
 
     #[test]
-    /// Tests that parsing fails when no color definitions are provided.
-    fn test_parse_no_colors() {
-        let input = "cell_size = 10\n--- \n0 0 0";
-        assert!(
-            PixGrid::parse(input).is_err(),
-            "Parsing should fail if no colors are defined"
-        );
+    fn test_export_pg_with_grid_color() {
+        // Logic for creating the temporary path, moved from helper function
+        let mut output_path = env::temp_dir();
+        output_path.push("test_grid_with_color.pg");
+        let path = output_path.as_path();
+
+        // 1. Setup Data
+        let mut color_map = HashMap::new();
+        // Note: Adding colors in reverse order to test the sorting logic
+        color_map.insert(2, Rgb([200, 100, 50]));
+        color_map.insert(1, Rgb([255, 255, 255]));
+        color_map.insert(0, Rgb([0, 0, 0]));
+
+        let grid = PixGrid {
+            color_map,
+            grid_data: vec![vec![0, 0, 1, 1], vec![0, 2, 2, 1], vec![1, 2, 0, 0]],
+            cell_size: 16,
+            grid_color: Some(Rgb([50, 50, 50])),
+        };
+
+        // 2. Define Expected Output
+        let expected_content = "\
+cell_size = 16
+grid_color = 50, 50, 50
+0 = 0, 0, 0
+1 = 255, 255, 255
+2 = 200, 100, 50
+---
+0 0 1 1
+0 2 2 1
+1 2 0 0
+";
+
+        // 3. Call Function & Assert Success
+        grid.export_pg(path)
+            .expect("Failed to export PixGrid to .pg file");
+
+        // 4. Read File Content and Assert (Logic moved from read_file_content)
+        let mut file = File::open(path).expect("Failed to open exported file for reading");
+        let mut actual_content = String::new();
+        file.read_to_string(&mut actual_content)
+            .expect("Failed to read exported file content to string");
+
+        // Assert the content matches the expected string.
+        assert_eq!(expected_content, actual_content);
+
+        // 5. Cleanup
+        fs::remove_file(path).expect("Failed to clean up temporary file");
+    }
+
+    #[test]
+    fn test_export_pg_without_grid_color() {
+        // Logic for creating the temporary path, moved from helper function
+        let mut output_path = env::temp_dir();
+        output_path.push("test_grid_without_color.pg");
+        let path = output_path.as_path();
+
+        // 1. Setup Data
+        let mut color_map = HashMap::new();
+        color_map.insert(5, Rgb([10, 20, 30]));
+
+        let grid = PixGrid {
+            color_map,
+            grid_data: vec![vec![5, 5], vec![5, 5]],
+            cell_size: 8,
+            grid_color: None, // Test case: None
+        };
+
+        // 2. Define Expected Output
+        let expected_content = "\
+cell_size = 8
+# grid_color = <R, G, B> # Omitted: No grid lines are drawn.
+5 = 10, 20, 30
+---
+5 5
+5 5
+";
+
+        // 3. Call Function & Assert Success
+        grid.export_pg(path)
+            .expect("Failed to export PixGrid without grid color");
+
+        // 4. Read File Content and Assert (Logic moved from read_file_content)
+        let mut file = File::open(path).expect("Failed to open exported file for reading");
+        let mut actual_content = String::new();
+        file.read_to_string(&mut actual_content)
+            .expect("Failed to read exported file content to string");
+
+        assert_eq!(expected_content, actual_content);
+
+        // 5. Cleanup
+        fs::remove_file(path).expect("Failed to clean up temporary file");
     }
 
     #[test]
     /// Tests that PNG generation creates a file with the correct dimensions.
-    fn test_generate_png_output() {
+    fn test_export_png_output() {
         let pix_grid = get_test_pixgrid();
         let output_path = PathBuf::from("temp_test_output.png");
 
@@ -1327,7 +1617,7 @@ cell_size = 40
 
         // 1. Generate the PNG file
         pix_grid
-            .generate_png(&output_path)
+            .export_png(&output_path)
             .expect("PNG generation failed");
 
         // 2. Assert file was created and has correct size (10x10 grid * 40 cell_size = 400x400)
@@ -1341,16 +1631,16 @@ cell_size = 40
                 assert_eq!(img.width(), 400, "PNG width should be 400 pixels");
                 assert_eq!(img.height(), 400, "PNG height should be 400 pixels");
             }
-            Err(e) => panic!("Failed to open generated PNG for verification: {}", e),
+            Err(e) => panic!("Failed to open exported PNG for verification: {}", e),
         }
 
         // 3. Cleanup
-        fs::remove_file(&output_path).expect("Failed to clean up generated PNG file");
+        fs::remove_file(&output_path).expect("Failed to clean up exported PNG file");
     }
 
     #[test]
     /// Tests that SVG generation creates a file with the correct header and stroke color.
-    fn test_generate_svg_output() {
+    fn test_export_svg_output() {
         let pix_grid = get_test_pixgrid();
         let output_path = PathBuf::from("temp_test_output.svg");
 
@@ -1359,7 +1649,7 @@ cell_size = 40
 
         // 1. Generate the SVG file
         pix_grid
-            .generate_svg(&output_path)
+            .export_svg(&output_path)
             .expect("SVG generation failed");
 
         // 2. Assert file was created
@@ -1369,7 +1659,7 @@ cell_size = 40
         );
 
         // 3. Assert content (400x400) and the stroke color
-        let content = fs::read_to_string(&output_path).expect("Failed to read generated SVG file");
+        let content = fs::read_to_string(&output_path).expect("Failed to read exported SVG file");
 
         let expected_header = r#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" shape-rendering="crispEdges">"#;
         let expected_stroke = r#"stroke="rgb(0,0,0)""#;
@@ -1384,6 +1674,6 @@ cell_size = 40
         );
 
         // 4. Cleanup
-        fs::remove_file(&output_path).expect("Failed to clean up generated SVG file");
+        fs::remove_file(&output_path).expect("Failed to clean up exported SVG file");
     }
 }

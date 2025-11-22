@@ -1,6 +1,6 @@
 # --- RENDERING PARAMETERS ---
 cell_size = 20 # Keep cell size reasonable for a large grid
-draw_grid = true
+grid_color = 50, 50, 50 # Dark grey grid (consistent with Rust code)
 
 # --- COLOR DEFINITION (Code = R, G, B) ---
 0 = 255, 255, 255 # White (background)
